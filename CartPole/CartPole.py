@@ -1,19 +1,18 @@
+# References:
+# https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
+# https://keras.io
 
-import os
-import random
 import gym
-import pylab
-import numpy as np
+from keras import layers
+from keras import models
 from collections import deque
-from keras.models import Model, load_model
-from keras.layers import Input, Dense, Lambda, Add, Conv2D, Flatten
-from keras.optimizers import Adam, RMSprop
-from keras import backend as K
-from PER import *
-import cv2
-
+import random
+import numpy as np
+import tensorflow as tf
+from statistics import mean
 from tensorflow.compat.v1 import ConfigProto
 from tensorflow.compat.v1 import InteractiveSession
+import matplotlib.pyplot as plt
 
 #os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID" 
 #os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
@@ -22,308 +21,262 @@ config = ConfigProto()
 config.gpu_options.allow_growth = True
 session = InteractiveSession(config=config)
 
-def OurModel(input_shape, action_space, dueling):
-    X_input = Input(input_shape)
-    X = X_input
-    
-    X = Conv2D(64, 5, strides=(3, 3),padding="valid", input_shape=input_shape, activation="relu", data_format="channels_first")(X)
-    X = Conv2D(64, 4, strides=(2, 2),padding="valid", activation="relu", data_format="channels_first")(X)
-    X = Conv2D(64, 3, strides=(1, 1),padding="valid", activation="relu", data_format="channels_first")(X)
-    X = Flatten()(X)
-    # 'Dense' is the basic form of a neural network layer
-    # Input Layer of state size(4) and Hidden Layer with 512 nodes
-    X = Dense(512, activation="relu", kernel_initializer='he_uniform')(X)
 
-    # Hidden layer with 256 nodes
-    X = Dense(256, activation="relu", kernel_initializer='he_uniform')(X)
-    
-    # Hidden layer with 64 nodes
-    X = Dense(64, activation="relu", kernel_initializer='he_uniform')(X)
+class DQN:
+    def __init__(self, num_outputs, loss_fn, optimizer):
+        self.loss_fn = loss_fn
+        self.optimizer = optimizer
 
-    if dueling:
-        state_value = Dense(1, kernel_initializer='he_uniform')(X)
-        state_value = Lambda(lambda s: K.expand_dims(s[:, 0], -1), output_shape=(action_space,))(state_value)
+        self.model = models.Sequential()
+        # self.model.add(layers.Conv2D(32, (8, 8), strides=4, activation='relu', input_shape=(110, 84, 4)))
+        # self.model.add(layers.Conv2D(32, (8, 8), strides=4, activation='relu', input_shape=(210, 160, 4)))
+        # self.model.add(layers.Conv2D(64, (4, 4), strides=2, activation='relu'))
+        # self.model.add(layers.Conv2D(64, (3, 3), strides=1, activation='relu'))
+        # self.model.add(layers.Flatten())
+        # self.model.add(layers.Dense(512, activation='relu'))
+        # self.model.add(layers.Dense(num_outputs, activation='linear'))
 
-        action_advantage = Dense(action_space, kernel_initializer='he_uniform')(X)
-        action_advantage = Lambda(lambda a: a[:, :] - K.mean(a[:, :], keepdims=True), output_shape=(action_space,))(action_advantage)
-
-        X = Add()([state_value, action_advantage])
-    else:
-        # Output Layer with # of actions: 2 nodes (left, right)
-        X = Dense(action_space, activation="linear", kernel_initializer='he_uniform')(X)
-
-    model = Model(inputs = X_input, outputs = X, name='model')
-    model.compile(loss="mean_squared_error", optimizer=RMSprop(lr=0.00025, rho=0.95, epsilon=0.01), metrics=["accuracy"])
-
-    model.summary()
-    return model
-
-class DQNAgent:
-    def __init__(self, env_name):
-        self.env_name = env_name       
-        self.env = gym.make(env_name)
-        self.env.seed(0)  
-        # by default, CartPole-v1 has max episode steps = 500
-        # we can use this to experiment beyond 500
-        self.env._max_episode_steps = 4000
-        self.state_size = self.env.observation_space.shape[0]
-        self.action_size = self.env.action_space.n
-        self.EPISODES = 1000
+        # As per the paper
+        #self.model.add(layers.Conv2D(16, (8, 8), strides=4, activation='relu', input_shape=(110, 84, 4)))
+        self.model.add(layers.Conv2D(16, (8, 8), strides=4, activation='relu', input_shape=(200, 300, 4)))
         
-        # Instantiate memory
-        memory_size = 10000
-        self.MEMORY = Memory(memory_size)
-        self.memory = deque(maxlen=2000)
+        self.model.add(layers.Conv2D(32, (4, 4), strides=2, activation='relu'))
+        self.model.add(layers.Flatten())
+        self.model.add(layers.Dense(256, activation='relu'))
+        self.model.add(layers.Dense(num_outputs, activation='linear'))
 
-        self.gamma = 0.95    # discount rate
-        
-        # EXPLORATION HYPERPARAMETERS for epsilon and epsilon greedy strategy
-        self.epsilon = 1.0  # exploration probability at start
-        self.epsilon_min = 0.01  # minimum exploration probability 
-        self.epsilon_decay = 0.0005  # exponential decay rate for exploration prob
-        
-        self.batch_size = 32
+    def clone(self):
+        return models.clone_model(self.model)
 
-        # defining model parameters
-        self.ddqn = True # use doudle deep q network
-        self.Soft_Update = False # use soft parameter update
-        self.dueling = True # use dealing netowrk
-        self.epsilon_greedy = False # use epsilon greedy strategy
-        self.USE_PER = True # use priority experienced replay
-        
-        self.TAU = 0.1 # target network soft update hyperparameter
+    def get_weights(self):
+        return self.model.get_weights()
 
-        self.Save_Path = 'Models'
-        if not os.path.exists(self.Save_Path): os.makedirs(self.Save_Path)
-        self.scores, self.episodes, self.average = [], [], []
+    def set_weights(self, weights):
+        self.model.set_weights(weights)
 
-        self.Model_name = os.path.join(self.Save_Path, self.env_name+"_PER_D3QN_CNN.h5")
+    def predict(self, input, batch_size):
+        return self.model.predict(input, batch_size=batch_size)
 
-        self.ROWS = 160
-        self.COLS = 240
-        self.REM_STEP = 4
+    def train(self, states, mask, target_Q_values):
+        with tf.GradientTape() as tape:
+            all_Q_values = self.model(states)
+            Q_values = tf.reduce_sum(all_Q_values * mask, axis=1, keepdims=True)
+            loss = tf.reduce_mean(self.loss_fn(target_Q_values, Q_values))
 
-        self.image_memory = np.zeros((self.REM_STEP, self.ROWS, self.COLS))
-        self.state_size = (self.REM_STEP, self.ROWS, self.COLS)
-        
-        # create main model and target model
-        self.model = OurModel(input_shape=self.state_size, action_space = self.action_size, dueling = self.dueling)
-        self.target_model = OurModel(input_shape=self.state_size, action_space = self.action_size, dueling = self.dueling)  
-
-    # after some time interval update the target model to be same with model
-    def update_target_model(self):
-        if not self.Soft_Update and self.ddqn:
-            self.target_model.set_weights(self.model.get_weights())
-            return
-        if self.Soft_Update and self.ddqn:
-            q_model_theta = self.model.get_weights()
-            target_model_theta = self.target_model.get_weights()
-            counter = 0
-            for q_weight, target_weight in zip(q_model_theta, target_model_theta):
-                target_weight = target_weight * (1-self.TAU) + q_weight * self.TAU
-                target_model_theta[counter] = target_weight
-                counter += 1
-            self.target_model.set_weights(target_model_theta)
-
-    def remember(self, state, action, reward, next_state, done):
-        experience = state, action, reward, next_state, done
-        if self.USE_PER:
-            self.MEMORY.store(experience)
-        else:
-            self.memory.append((experience))
-
-    def act(self, state, decay_step):
-        # EPSILON GREEDY STRATEGY
-        if self.epsilon_greedy:
-        # Here we'll use an improved version of our epsilon greedy strategy for Q-learning
-            explore_probability = self.epsilon_min + (self.epsilon - self.epsilon_min) * np.exp(-self.epsilon_decay * decay_step)
-        # OLD EPSILON STRATEGY
-        else:
-            if self.epsilon > self.epsilon_min:
-                self.epsilon *= (1-self.epsilon_decay)
-            explore_probability = self.epsilon
-    
-        if explore_probability > np.random.rand():
-            # Make a random action (exploration)
-            return random.randrange(self.action_size), explore_probability
-        else:
-            # Get action from Q-network (exploitation)
-            # Estimate the Qs values state
-            # Take the biggest Q value (= the best action)
-            return np.argmax(self.model.predict(state)), explore_probability
-                
-    def replay(self):
-        if self.USE_PER:
-            # Sample minibatch from the PER memory
-            tree_idx, minibatch  = self.MEMORY.sample(self.batch_size)
-        else:
-            # Randomly sample minibatch from the deque memory
-            minibatch = random.sample(self.memory, min(len(self.memory), self.batch_size))
-
-        state = np.zeros((self.batch_size,) + self.state_size)
-        next_state = np.zeros((self.batch_size,) + self.state_size)
-        action, reward, done = [], [], []
-
-        # do this before prediction
-        # for speedup, this could be done on the tensor level
-        # but easier to understand using a loop       
-        for i in range(len(minibatch)):
-            state[i] = minibatch[i][0]
-            action.append(minibatch[i][1])
-            reward.append(minibatch[i][2])
-            next_state[i] = minibatch[i][3]
-            done.append(minibatch[i][4])
-
-        # do batch prediction to save speed
-        # predict Q-values for starting state using the main network
-        target = self.model.predict(state)
-        target_old = np.array(target)
-        # predict best action in ending state using the main network
-        target_next = self.model.predict(next_state)
-        # predict Q-values for ending state using the target network
-        target_val = self.target_model.predict(next_state)
-
-        for i in range(len(minibatch)):
-            # correction on the Q value for the action used
-            if done[i]:
-                target[i][action[i]] = reward[i]
-            else:
-                # the key point of Double DQN
-                # selection of action is from model
-                # update is from target model
-                if self.ddqn: # Double - DQN
-                    # current Q Network selects the action
-                    # a'_max = argmax_a' Q(s', a')
-                    a = np.argmax(target_next[i])
-                    # target Q Network evaluates the action
-                    # Q_max = Q_target(s', a'_max)
-                    target[i][action[i]] = reward[i] + self.gamma * (target_val[i][a])
-                else: # Standard - DQN
-                    # DQN chooses the max Q value among next actions
-                    # selection and evaluation of action is on the target Q Network
-                    # Q_max = max_a' Q_target(s', a')
-                    target[i][action[i]] = reward[i] + self.gamma * (np.amax(target_next[i]))
-
-            if self.USE_PER:
-                absolute_errors = np.abs(target_old[i]-target[i])
-                # Update priority
-                self.MEMORY.batch_update(tree_idx, absolute_errors)
-                
-        # Train the Neural Network with batches
-        self.model.fit(state, target, batch_size=self.batch_size, verbose=0)
-
-    def load(self, name):
-        self.model = load_model(name)
+        gradients = tape.gradient(loss, self.model.trainable_variables)
+        self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
     def save(self, name):
         self.model.save(name)
 
-    pylab.figure(figsize=(18, 9))
-    def PlotModel(self, score, episode):
-        self.scores.append(score)
-        self.episodes.append(episode)
-        self.average.append(sum(self.scores[-50:]) / len(self.scores[-50:]))
-        pylab.plot(self.episodes, self.average, 'r')
-        pylab.plot(self.episodes, self.scores, 'b')
-        pylab.ylabel('Score', fontsize=18)
-        pylab.xlabel('Steps', fontsize=18)
-        dqn = 'DQN_'
-        softupdate = ''
-        dueling = ''
-        greedy = ''
-        PER = ''
-        if self.ddqn: dqn = 'DDQN_'
-        if self.Soft_Update: softupdate = '_soft'
-        if self.dueling: dueling = '_Dueling'
-        if self.epsilon_greedy: greedy = '_Greedy'
-        if self.USE_PER: PER = '_PER'
-        try:
-            pylab.savefig(dqn+self.env_name+softupdate+dueling+greedy+PER+"_CNN.png")
-        except OSError:
-            pass
+    def load(self, name):
+        self.model = tf.keras.load_model(name)
 
-        return str(self.average[-1])[:5]
 
-    def imshow(self, image, rem_step=0):
-        cv2.imshow("cartpole"+str(rem_step), image[rem_step,...])
-        if cv2.waitKey(25) & 0xFF == ord("q"):
-            cv2.destroyAllWindows()
-            return
+class ReplayBuffer:
+    def __init__(self, len):
+        self.buffer = deque(maxlen=len)
 
-    def GetImage(self):
-        img = self.env.render(mode='rgb_array')
+    def append(self, *args):
+        self.buffer.append(*args)
+
+    def sample(self, size):
+        x = random.sample(self.buffer, size)
+        states, actions, rewards, next_states, dones = zip(*x)
+        return np.array(states), np.array(actions), np.array(rewards), np.array(next_states), np.array(dones)
+
+    def __len__(self):
+        return len(self.buffer)
+
+
+class StackedFrames:
+    def __init__(self):
+        self.frame_q = deque(maxlen=4)
+        self.frame_q.append(np.zeros(INPUT_SHAPE))
+        self.frame_q.append(np.zeros(INPUT_SHAPE))
+        self.frame_q.append(np.zeros(INPUT_SHAPE))
+        self.frame_q.append(np.zeros(INPUT_SHAPE))
+
+    # As mentioned in the paper we first convert the RGB representation into 
+    # gray scale and then down sample to 110 x 84. Since we do not have a 
+    # limitation to make the images square we do not do it.
+    def preprocess_frame(self, frame):
+        # frame = np.squeeze(frame[:, :, 0])
+        frame = tf.image.rgb_to_grayscale(frame)
+        #frame = tf.keras.preprocessing.image.smart_resize(frame, (110, 84)) / 255.0
+        frame = tf.keras.preprocessing.image.smart_resize(frame, INPUT_SHAPE) / 255.0
         
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        img_rgb_resized = cv2.resize(img_rgb, (self.COLS, self.ROWS), interpolation=cv2.INTER_CUBIC)
-        img_rgb_resized[img_rgb_resized < 255] = 0
-        img_rgb_resized = img_rgb_resized / 255
+        frame = np.squeeze(frame)
 
-        self.image_memory = np.roll(self.image_memory, 1, axis = 0)
-        self.image_memory[0,:,:] = img_rgb_resized
+        self.frame_q.append(frame)
 
-        #self.imshow(self.image_memory,0)
-        
-        return np.expand_dims(self.image_memory, axis=0)
+        # Stack 4 frames as mentioned in the paper
+        self.frames = np.dstack((self.frame_q[0], self.frame_q[1], self.frame_q[2], self.frame_q[3]))
 
-    def reset(self):
-        self.env.reset()
-        for i in range(self.REM_STEP):
-            state = self.GetImage()
-        return state
+        return
 
-    def step(self,action):
-        next_state, reward, done, info = self.env.step(action)
-        next_state = self.GetImage()
-        return next_state, reward, done, info
-    
-    def run(self):
-        decay_step = 0
-        for e in range(self.EPISODES):
-            state = self.reset()
-            done = False
-            i = 0
-            while not done:
-                decay_step += 1
-                action, explore_probability = self.act(state, decay_step)
-                next_state, reward, done, _ = self.step(action)
-                if not done or i == self.env._max_episode_steps-1:
-                    reward = reward
-                else:
-                    reward = -100
-                self.remember(state, action, reward, next_state, done)
-                state = next_state
-                i += 1
-                if done:
-                    # every REM_STEP update target model
-                    if e % self.REM_STEP == 0:
-                        self.update_target_model()
-                    
-                    # every episode, plot the result
-                    average = self.PlotModel(i, e)
-                    
-                    print("episode: {}/{}, score: {}, e: {:.2}, average: {}".format(e, self.EPISODES, i, explore_probability, average))
-                    if i == self.env._max_episode_steps:
-                        print("Saving trained model to", self.Model_name)
-                        #self.save(self.Model_name)
-                        break
-                self.replay()
+    def append(self, frame):
+        return self.frame_q.append(frame)
 
-    def test(self):
-        self.load(self.Model_name)
-        for e in range(self.EPISODES):
-            state = self.reset()
-            done = False
-            i = 0
-            while not done:
-                action = np.argmax(self.model.predict(state))
-                next_state, reward, done, _ = env.step(action)
-                i += 1
-                if done:
-                    print("episode: {}/{}, score: {}".format(e, self.EPISODES, i))
-                    break
+    def get_frames(self):
+        return self.frames
 
-if __name__ == "__main__":
-    env_name = 'CartPole-v1'
-    agent = DQNAgent(env_name)
-    agent.run()
-    #agent.test()
+
+# state: current state
+# returns the next action based on epsilon greedy policy
+# As mentioned in the paper we use the epsilon greedy policy with epsilon annealed
+# linearly from 1 to 0.1 and fixed at 0.1 thereafter. 
+def select_next_action(env, network, episode, state):
+    epsilon = max(1 - episode / EPS_ANNEALING_FACTOR, 0.1)
+    if random.random() < epsilon:
+        # Return random action
+        return env.action_space.sample()
+    else:
+        # Select action based on the model
+        Q = network.predict(state[np.newaxis], batch_size=1)
+        Q_max = np.argmax(Q[0])
+
+        return Q_max
+
+
+def take_action(env, network, episode, sf):
+    state = sf.get_frames()
+    action = select_next_action(env, network, episode, state)
+    next_state, reward, done, info = env.step(action)
+    next_state = env.render(mode='rgb_array')
+    next_sf = sf
+    next_sf.preprocess_frame(next_state)
+
+    # Populate the replay buffer so that we can sample batches from it
+    replay_buffer.append((sf, action, reward, next_sf, done))
+
+    return next_sf, reward, done, info
+
+
+def train():
+    # Sample batches from the replay buffer
+    sfs, actions, rewards, next_sfs, dones = replay_buffer.sample(BATCH_SIZE)
+
+    states = np.array([sfs[i].get_frames() for i in range(BATCH_SIZE)])
+    next_states = np.array([next_sfs[i].get_frames() for i in range(BATCH_SIZE)])
+
+    # Predict next Q values from the target model
+    next_Q_values = target_network.predict(next_states, batch_size=BATCH_SIZE)
+
+    # Select the optimal Q value for the next state by appying the Bellman Equation
+    target_Q_values = rewards + (1 - dones) * GAMMA * np.max(next_Q_values, axis=1)
+
+    # Crete a 1-hot encoding so that we select only the action that the agent has selected
+    mask = tf.one_hot(actions, num_outputs)
+    online_network.train(states, mask, target_Q_values)
+
+    return
+
+
+#ENV_NAME = 'Breakout-v0'
+#ENV_NAME = 'BreakoutDeterministic-v4'
+ENV_NAME = 'CartPole-v1'
+MODEL_DIR = 'Models'
+CHECKPOINT_STEP = 5
+
+#INPUT_SHAPE = (210, 160)
+#INPUT_SHAPE = (110, 84)
+INPUT_SHAPE = (200, 300)
+
+NUM_EPISODES = 10
+NUM_STEPS = 1000
+BATCH_SIZE = 128
+REPLAY_BUFFER_LEN = 100000
+TARGET_UPDATE_FRAMES = 1000
+
+# NUM_EPISODES = 500
+# NUM_STEPS = 200
+# BATCH_SIZE = 32
+# REPLAY_BUFFER_LEN = 1000
+# TARGET_UPDATE_FRAMES = 50
+
+# NUM_EPISODES = 100
+# NUM_STEPS = 500
+# BATCH_SIZE = 32
+# REPLAY_BUFFER_LEN = 10000
+# TARGET_UPDATE_FRAMES = 100
+
+EPS_ANNEALING_FACTOR = 1000
+GAMMA = 0.99
+
+# Setup the gym environment
+env = gym.make(ENV_NAME)
+env.reset()
+
+#input_shape = env.observation_space.shape
+num_outputs = env.action_space.n
+optimizer = tf.keras.optimizers.RMSprop()
+# optimizer = tf.keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
+
+# Learning network
+online_network = DQN(num_outputs,
+                     loss_fn=tf.keras.losses.mean_squared_error,
+                     optimizer=optimizer)
+
+# target network
+target_network = online_network.clone()
+target_network.set_weights(online_network.get_weights())
+
+# Replay Buffer
+replay_buffer = ReplayBuffer(len=REPLAY_BUFFER_LEN)
+
+sf = StackedFrames()
+
+frame_count = 0
+rewards = []
+rolling_period = 100
+rolling_rewards = []
+
+# Start the episode
+for e in range(NUM_EPISODES):
+    env.reset()
+    state = env.render(mode='rgb_array')
+    sf.preprocess_frame(state)
+
+    episode_rewards = 0
+    for s in range(NUM_STEPS):
+        frame_count += 1
+
+        # state = state[:, :, 0]
+        # state, reward, done, info = take_action(env, online_network, e, state[:, :, np.newaxis])
+        sf, reward, done, info = take_action(env, online_network, e, sf)
+
+        episode_rewards += reward
+
+        if len(replay_buffer) > 10000:
+            train()
+
+        # Copy the online model weights to the target model after regular intervals
+        if frame_count % TARGET_UPDATE_FRAMES == 0:
+            target_network.set_weights(online_network.get_weights())
+
+        env.render()
+        if done:
+            break
+
+
+    rewards.append(episode_rewards)
+    rolling_rewards.append(mean(rewards[max(-rolling_period, -(e+1)):]))
+    print("episodes={}, steps={}, reward={}, rreward={:.2f}".format(
+        e, s, rewards[-1], rolling_rewards[e]))
+
+    if e and not e % CHECKPOINT_STEP:
+        target_network.save(MODEL_DIR+f'/target_network/cps/{}'.format(e))
+        online_network.save(MODEL_DIR+f'/online_network/cps/{}'.format(e))
+
+
+online_network.save(MODEL_DIR+'/online_network')
+target_network.save(MODEL_DIR+'/target_network')
+
+
+episodes = [i for i in range(e+1)] 
+plt.plot(episodes, rewards, label='Rewards')
+plt.plot(episodes, rolling_rewards, label=f'{rolling_period} Episode MA')
+plt.show()
+
+env.close()
