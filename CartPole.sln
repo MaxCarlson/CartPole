@@ -1,0 +1,23 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.31105.61
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "CartPole", "CartPole\CartPole.pyproj", "{D1FDFE53-B5C5-4F76-B149-0BF25EF3D872}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D1FDFE53-B5C5-4F76-B149-0BF25EF3D872}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D1FDFE53-B5C5-4F76-B149-0BF25EF3D872}.Release|Any CPU.ActiveCfg = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {1C3A8FB1-FF8F-4315-8266-0E075DE860D0}
+	EndGlobalSection
+EndGlobal
