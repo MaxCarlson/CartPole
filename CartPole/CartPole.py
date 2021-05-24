@@ -177,29 +177,18 @@ def train():
 #ENV_NAME = 'BreakoutDeterministic-v4'
 ENV_NAME = 'CartPole-v1'
 MODEL_DIR = 'Models'
-CHECKPOINT_STEP = 5
+CHECKPOINT_STEP = 100
 
 #INPUT_SHAPE = (210, 160)
 #INPUT_SHAPE = (110, 84)
 INPUT_SHAPE = (200, 300)
 
-NUM_EPISODES = 10
+NUM_EPISODES = 2500
 NUM_STEPS = 1000
 BATCH_SIZE = 128
-REPLAY_BUFFER_LEN = 100000
-TARGET_UPDATE_FRAMES = 1000
-
-# NUM_EPISODES = 500
-# NUM_STEPS = 200
-# BATCH_SIZE = 32
-# REPLAY_BUFFER_LEN = 1000
-# TARGET_UPDATE_FRAMES = 50
-
-# NUM_EPISODES = 100
-# NUM_STEPS = 500
-# BATCH_SIZE = 32
-# REPLAY_BUFFER_LEN = 10000
-# TARGET_UPDATE_FRAMES = 100
+FRAME_PER_TRAIN = 8
+TARGET_UPDATE_FRAMES = 500
+REPLAY_BUFFER_LEN = 2500
 
 EPS_ANNEALING_FACTOR = 1000
 GAMMA = 0.99
@@ -248,7 +237,7 @@ for e in range(NUM_EPISODES):
 
         episode_rewards += reward
 
-        if len(replay_buffer) > 10000:
+        if len(replay_buffer) >= BATCH_SIZE:
             train()
 
         # Copy the online model weights to the target model after regular intervals
@@ -266,8 +255,8 @@ for e in range(NUM_EPISODES):
         e, s, rewards[-1], rolling_rewards[e]))
 
     if e and not e % CHECKPOINT_STEP:
-        target_network.save(MODEL_DIR+f'/target_network/cps/{}'.format(e))
-        online_network.save(MODEL_DIR+f'/online_network/cps/{}'.format(e))
+        target_network.save(f'{MODEL_DIR}/target_network/cps/{e}')
+        online_network.save(f'{MODEL_DIR}/online_network/cps/{e}')
 
 
 online_network.save(MODEL_DIR+'/online_network')

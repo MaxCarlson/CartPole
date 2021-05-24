@@ -361,3 +361,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/CartPole/Models/online_network/cps
+/CartPole/Models/target_network/cps
