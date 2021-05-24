@@ -38,7 +38,7 @@ class DQN:
 
         # As per the paper
         #self.model.add(layers.Conv2D(16, (8, 8), strides=4, activation='relu', input_shape=(110, 84, 4)))
-        self.model.add(layers.Conv2D(16, (8, 8), strides=4, activation='relu', input_shape=(200, 300, 4)))
+        self.model.add(layers.Conv2D(16, (8, 8), strides=4, activation='relu', input_shape=(100, 150, 4)))
         
         self.model.add(layers.Conv2D(32, (4, 4), strides=2, activation='relu'))
         self.model.add(layers.Flatten())
@@ -101,9 +101,7 @@ class StackedFrames:
     # gray scale and then down sample to 110 x 84. Since we do not have a 
     # limitation to make the images square we do not do it.
     def preprocess_frame(self, frame):
-        # frame = np.squeeze(frame[:, :, 0])
         frame = tf.image.rgb_to_grayscale(frame)
-        #frame = tf.keras.preprocessing.image.smart_resize(frame, (110, 84)) / 255.0
         frame = tf.keras.preprocessing.image.smart_resize(frame, INPUT_SHAPE) / 255.0
         
         frame = np.squeeze(frame)
@@ -161,7 +159,7 @@ def train():
     next_states = np.array([next_sfs[i].get_frames() for i in range(BATCH_SIZE)])
 
     # Predict next Q values from the target model
-    next_Q_values = target_network.predict(next_states, batch_size=BATCH_SIZE)
+    next_Q_values = online_network.predict(next_states, batch_size=BATCH_SIZE)
 
     # Select the optimal Q value for the next state by appying the Bellman Equation
     target_Q_values = rewards + (1 - dones) * GAMMA * np.max(next_Q_values, axis=1)
@@ -181,13 +179,11 @@ CHECKPOINT_STEP = 100
 
 #INPUT_SHAPE = (210, 160)
 #INPUT_SHAPE = (110, 84)
-INPUT_SHAPE = (200, 300)
+INPUT_SHAPE = (100, 150)
 
 NUM_EPISODES = 2500
 NUM_STEPS = 1000
 BATCH_SIZE = 128
-FRAME_PER_TRAIN = 8
-TARGET_UPDATE_FRAMES = 500
 REPLAY_BUFFER_LEN = 2500
 
 EPS_ANNEALING_FACTOR = 1000
@@ -241,8 +237,8 @@ for e in range(NUM_EPISODES):
             train()
 
         # Copy the online model weights to the target model after regular intervals
-        if frame_count % TARGET_UPDATE_FRAMES == 0:
-            target_network.set_weights(online_network.get_weights())
+        #if frame_count % TARGET_UPDATE_FRAMES == 0:
+        #    target_network.set_weights(online_network.get_weights())
 
         env.render()
         if done:
@@ -255,12 +251,12 @@ for e in range(NUM_EPISODES):
         e, s, rewards[-1], rolling_rewards[e]))
 
     if e and not e % CHECKPOINT_STEP:
-        target_network.save(f'{MODEL_DIR}/target_network/cps/{e}')
+        #target_network.save(f'{MODEL_DIR}/target_network/cps/{e}')
         online_network.save(f'{MODEL_DIR}/online_network/cps/{e}')
 
 
 online_network.save(MODEL_DIR+'/online_network')
-target_network.save(MODEL_DIR+'/target_network')
+#target_network.save(MODEL_DIR+'/target_network')
 
 
 episodes = [i for i in range(e+1)] 
